@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "context-courier"
+version = "0.1.0"
+description = "Queue a filtered project snapshot into ChatGPT with one fast Windows file paste."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "pywin32>=306",
+    "pywinauto>=0.6.9",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
+
+[project.scripts]
+context-courier = "context_courier:main"
+
+[tool.setuptools]
+py-modules = ["context_courier"]
