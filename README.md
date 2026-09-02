@@ -37,9 +37,9 @@ By default, the snapshot is rebuilt at `%TEMP%\context-courier-snapshot`. Use `-
 
 ## Snapshot filtering
 
-ContextCourier copies the project tree, excluding common repository metadata, virtual environments, dependency trees, build output, editor state, and caches. The built-in exclusions include `.git`, `.venv`, `.vscode`, `.idea`, `__pycache__`, Python tool caches, `node_modules`, `build`, and `dist`.
+ContextCourier respects the source project's root `.gitignore` rules, including normal directory patterns and negation, and also excludes common repository metadata, virtual environments, dependency trees, build output, editor state, and caches. The built-in exclusions include `.git`, `.venv`, `.vscode`, `.idea`, `__pycache__`, Python tool caches, `node_modules`, `build`, and `dist`.
 
-This is deliberately a simple name-based filter, not a security boundary. Review the `--list-only` output before attaching an unfamiliar or sensitive project. Project secrets and local configuration with other names are not automatically detected.
+Filtering is not a security boundary. Files that are not covered by `.gitignore` or the built-in exclusions remain eligible for attachment, so review the `--list-only` output before attaching an unfamiliar or sensitive project.
 
 ## How attachment works
 

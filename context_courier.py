@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 
+from pathspec import GitIgnoreSpec
 import win32api
 import win32con
 from pywinauto import Desktop, timings
@@ -38,12 +39,35 @@ class DROPFILES(ctypes.Structure):
     ]
 
 
-def shouldExclude(_directory, names):
-    return [
-        name
-        for name in names
-        if name in EXCLUDED_NAMES or name.endswith(".egg-info")
-    ]
+def loadGitignore(project_path):
+    gitignore_path = project_path / ".gitignore"
+    if not gitignore_path.is_file():
+        return GitIgnoreSpec.from_lines([])
+    return GitIgnoreSpec.from_lines(
+        gitignore_path.read_text(encoding="utf-8-sig").splitlines()
+    )
+
+
+def createExclusionFilter(project_path):
+    gitignore = loadGitignore(project_path)
+
+    def shouldExclude(directory, names):
+        directory = Path(directory)
+        ignored = []
+        for name in names:
+            path = directory / name
+            relative_path = path.relative_to(project_path).as_posix()
+            if path.is_dir():
+                relative_path += "/"
+            if (
+                name in EXCLUDED_NAMES
+                or name.endswith(".egg-info")
+                or gitignore.match_file(relative_path)
+            ):
+                ignored.append(name)
+        return ignored
+
+    return shouldExclude
 
 
 def buildSnapshot(project_path, snapshot_path):
@@ -56,7 +80,11 @@ def buildSnapshot(project_path, snapshot_path):
 
     if snapshot_path.exists():
         shutil.rmtree(snapshot_path)
-    shutil.copytree(project_path, snapshot_path, ignore=shouldExclude)
+    shutil.copytree(
+        project_path,
+        snapshot_path,
+        ignore=createExclusionFilter(project_path),
+    )
 
 
 def createAttachmentQueue(snapshot_path):

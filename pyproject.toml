@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "context-courier"
-version = "0.1.0"
+version = "0.1.1"
 description = "Queue a filtered project snapshot into ChatGPT with one fast Windows file paste."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
+    "pathspec>=0.12.1",
     "pywin32>=306",
     "pywinauto>=0.6.9",
 ]
