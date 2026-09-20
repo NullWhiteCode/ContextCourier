@@ -28,6 +28,8 @@ DEFOCUS_OFFSET = 20
 DEFOCUS_MOUSE_DELAY = 0.005
 REFOCUS_MOUSE_DELAY = 0.010
 
+MAX_ATTACHMENTS = 20
+
 
 class DROPFILES(ctypes.Structure):
     _fields_ = [
@@ -371,6 +373,14 @@ def main():
 
     attachment_queue = createAttachmentQueue(args.snapshot_dir)
     print(f"Total files: {len(attachment_queue)}")
+    
+    if len(attachment_queue) > MAX_ATTACHMENTS and not args.list_only:
+            print(
+                f"\nCannot queue {len(attachment_queue)} files: "
+                f"ChatGPT allows a maximum of {MAX_ATTACHMENTS} attachments.",
+                file=sys.stderr,
+            )
+            return 1
 
     if args.list_only:
         print("List-only mode: no files were attached.")
