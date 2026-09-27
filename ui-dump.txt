@@ -1,0 +1,15 @@
+
+Snapshot build: 0.00s
+
+Attachment queue contains 3 files:
+  1. CC_TEST_A.JPEG
+  2. CC_TEST_B.JPEG
+  3. CC_TEST_C.JPEG
+
+Total files: 3
+Composer resolved: ProseMirror + Edit
+True
+Queued all 3 files in one paste.
+
+ALL FILES QUEUED
+TOTAL RUNTIME: 6.48s

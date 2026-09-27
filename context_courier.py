@@ -281,6 +281,64 @@ def resolveComposer(chatgpt):
     raise RuntimeError("\n".join(diagnostics))
 
 
+
+def filenameVisibilityCheck(chatgpt, expected_filename):
+
+    for control in chatgpt.descendants():
+        info = control.element_info
+        class_name = info.class_name or ""
+        name = control.window_text() or ""
+        visible = control.is_visible()
+        
+        if "composer-attachment-surface" in class_name and name == expected_filename and visible:
+            return True
+        
+    return False
+
+
+
+def batchVisibilityCheck(chatgpt, batch):
+    
+    for file in batch:
+        filename = file.name
+        
+        if filenameVisibilityCheck(chatgpt, filename) is False:
+            return False
+        
+    return True
+    
+
+# Diagnostic tool
+def printInfo(chatgpt):
+    for index, control in enumerate(chatgpt.descendants(), start=1):
+        info = control.element_info
+        control_type = info.control_type or ""
+        name = control.window_text() or ""
+        class_name = info.class_name or ""
+        automation_id = info.automation_id or ""
+        visible = control.is_visible()
+        enabled = control.is_enabled()
+        
+        print(index, control_type, name, class_name, automation_id, visible, enabled)
+        
+        
+def waitForBatchVisibility(chatgpt, batch, timeout):
+    start_time = time.perf_counter()
+    
+    while True:
+        result = batchVisibilityCheck(chatgpt, batch)
+        
+        if result:
+            return True
+        
+        elapsed_time = time.perf_counter() - start_time
+        
+        if elapsed_time >= timeout:
+            return False
+        
+        time.sleep(0.1)
+
+
 def pasteIntoChatGPTAndRestore(chatgpt, original_foreground_hwnd):
     user32 = ctypes.windll.user32
     try:
@@ -332,11 +390,13 @@ def queueAttachments(attachment_queue):
 
     try:
         pasteIntoChatGPTAndRestore(chatgpt, original_foreground_hwnd)
+        chatgpt.set_focus()
+        print(waitForBatchVisibility(chatgpt, attachment_queue, 10))
     except Exception as error:
         print("Could not attach files to ChatGPT:")
         print(error)
         return False
-
+    
     print(f"Queued all {len(attachment_queue)} files in one paste.")
     return True
 
@@ -357,8 +417,22 @@ def parseArguments():
         action="store_true",
         help="build and list the filtered snapshot without attaching files",
     )
+    parser.add_argument(
+        "--batch-send",
+        action="store_true",
+        help="send batches of files (not > 20 per batch). Intended for snapshots above 20 files in size",
+    )
     return parser.parse_args()
 
+
+def createFileBatches(attachment_queue):
+    attachment_queue_batches = []
+    
+    for start in range (0, len(attachment_queue), MAX_ATTACHMENTS):
+        attachment_queue_batches.append(attachment_queue[start:start + MAX_ATTACHMENTS])
+    
+    return attachment_queue_batches
+    
 
 def main():
     args = parseArguments()
@@ -374,7 +448,7 @@ def main():
     attachment_queue = createAttachmentQueue(args.snapshot_dir)
     print(f"Total files: {len(attachment_queue)}")
     
-    if len(attachment_queue) > MAX_ATTACHMENTS and not args.list_only:
+    if len(attachment_queue) > MAX_ATTACHMENTS and not args.list_only and not args.batch_send:
             print(
                 f"\nCannot queue {len(attachment_queue)} files: "
                 f"ChatGPT allows a maximum of {MAX_ATTACHMENTS} attachments.",
@@ -384,6 +458,11 @@ def main():
 
     if args.list_only:
         print("List-only mode: no files were attached.")
+        return 0
+    
+    if args.batch_send:
+        batches = createFileBatches(attachment_queue)
+        print([len(batch) for batch in batches])
         return 0
 
     timings.Timings.after_clickinput_wait = 0.0
@@ -398,5 +477,12 @@ def main():
     return 0
 
 
+    
+    
+        
+
 if __name__ == "__main__":
     raise SystemExit(main())
+
+    
+    
