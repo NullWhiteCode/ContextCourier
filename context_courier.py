@@ -391,7 +391,12 @@ def queueAttachments(attachment_queue):
     try:
         pasteIntoChatGPTAndRestore(chatgpt, original_foreground_hwnd)
         chatgpt.set_focus()
-        print(waitForBatchVisibility(chatgpt, attachment_queue, 10))
+        
+        timeout = 10
+        if not waitForBatchVisibility(chatgpt, attachment_queue, timeout):
+            print("Attachment readiness timed out after 10 seconds.")
+            return False
+        
     except Exception as error:
         print("Could not attach files to ChatGPT:")
         print(error)
@@ -476,10 +481,6 @@ def main():
     )
     return 0
 
-
-    
-    
-        
 
 if __name__ == "__main__":
     raise SystemExit(main())
