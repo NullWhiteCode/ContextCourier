@@ -10,7 +10,7 @@ import time
 from pathspec import GitIgnoreSpec
 import win32api
 import win32con
-from pywinauto import Desktop, timings
+from pywinauto import Desktop, timings, findwindows
 
 
 EXCLUDED_NAMES = {
@@ -281,7 +281,6 @@ def resolveComposer(chatgpt):
     raise RuntimeError("\n".join(diagnostics))
 
 
-
 def filenameVisibilityCheck(chatgpt, expected_filename):
 
     for control in chatgpt.descendants():
@@ -294,7 +293,6 @@ def filenameVisibilityCheck(chatgpt, expected_filename):
             return True
         
     return False
-
 
 
 def batchVisibilityCheck(chatgpt, batch):
@@ -321,6 +319,35 @@ def printInfo(chatgpt):
         
         print(index, control_type, name, class_name, automation_id, visible, enabled)
         
+
+# Diagnostic tool
+def findButtons(chatgpt):
+    selectors = {"title": "Stop", "control_type": "Button"}
+    
+    stop_control = chatgpt.child_window(**selectors).wrapper_object()
+    name = stop_control.window_text() or ""
+    print(name)
+    
+        
+# Diagnostic tool
+def resolveSendControl(chatgpt):
+    
+    for control in chatgpt.descendants():
+        info = control.element_info
+        name = control.window_text() or ""
+        visible = control.is_visible()
+        control_type = info.control_type or ""
+        enabled = control.is_enabled()
+
+        if (control_type == "Button"
+            and name == "Send"
+            and visible
+            and enabled
+        ):
+            return control
+        
+    return None
+        
         
 def waitForBatchVisibility(chatgpt, batch, timeout):
     start_time = time.perf_counter()
@@ -337,7 +364,35 @@ def waitForBatchVisibility(chatgpt, batch, timeout):
             return False
         
         time.sleep(0.1)
-
+        
+        
+def waitForGenerationComplete(chatgpt, timeout):
+    start_time = time.perf_counter()
+    
+    while True:
+        result = generatingCheck(chatgpt)
+        
+        if not result:
+            return True
+        
+        elapsed_time = time.perf_counter() - start_time
+        
+        if elapsed_time >= timeout:
+            return False
+        
+        time.sleep(0.1)
+        
+        
+def generatingCheck(chatgpt):
+    selectors = {"title": "Stop", "control_type": "Button"}
+    
+    try:
+        chatgpt.child_window(**selectors).wrapper_object()
+        return True
+    
+    except findwindows.ElementNotFoundError:
+        return False
+    
 
 def pasteIntoChatGPTAndRestore(chatgpt, original_foreground_hwnd):
     user32 = ctypes.windll.user32
@@ -396,6 +451,13 @@ def queueAttachments(attachment_queue):
         if not waitForBatchVisibility(chatgpt, attachment_queue, timeout):
             print("Attachment readiness timed out after 10 seconds.")
             return False
+        
+        send_control = resolveSendControl(chatgpt)
+        
+        if send_control is None:
+            return False
+        else:
+            send_control.click_input()
         
     except Exception as error:
         print("Could not attach files to ChatGPT:")
