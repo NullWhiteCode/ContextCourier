@@ -1,7 +1,9 @@
 import argparse
+import os
 from pathlib import Path
 import ctypes
 from ctypes import wintypes
+import re
 import shutil
 import sys
 import tempfile
@@ -29,6 +31,14 @@ DEFOCUS_MOUSE_DELAY = 0.005
 REFOCUS_MOUSE_DELAY = 0.010
 
 MAX_ATTACHMENTS = 20
+
+# Upper bounds in seconds; successful checks return immediately.
+WINDOW_TIMEOUT = 15
+ATTACHMENT_READY_TIMEOUT = 90
+SEND_READY_TIMEOUT = 45
+GENERATION_START_TIMEOUT = 30
+GENERATION_COMPLETE_TIMEOUT = 180
+POLL_INTERVAL = 0.5
 
 
 class DROPFILES(ctypes.Structure):
@@ -215,7 +225,6 @@ def resolveComposer(chatgpt):
     for selector, label in selectors:
         try:
             composer = chatgpt.child_window(**selector).wrapper_object()
-            print(f"Composer resolved: {label}")
             return composer
         except Exception as error:
             selector_errors.append(f"{label}: {error}")
@@ -258,12 +267,7 @@ def resolveComposer(chatgpt):
 
     candidates.sort(key=lambda candidate: (candidate[0], candidate[1]), reverse=True)
     if candidates and candidates[0][0] >= 55:
-        best = candidates[0]
-        print(
-            "Composer resolved: diagnostic scored fallback "
-            f"(descendant {best[2]}, score {best[0]:.3f})"
-        )
-        return best[3]
+        return candidates[0][3]
 
     diagnostics = [
         "Could not resolve the ChatGPT composer.",
@@ -281,33 +285,71 @@ def resolveComposer(chatgpt):
     raise RuntimeError("\n".join(diagnostics))
 
 
-def filenameVisibilityCheck(chatgpt, expected_filename):
+def visibleAttachmentNames(chatgpt):
+    names = []
 
     for control in chatgpt.descendants():
         info = control.element_info
         class_name = info.class_name or ""
+
+        if "composer-attachment-surface" not in class_name:
+            continue
+
+        if not control.is_visible():
+            continue
+
         name = control.window_text() or ""
-        visible = control.is_visible()
-        
-        if "composer-attachment-surface" in class_name and name == expected_filename and visible:
-            return True
-        
-    return False
+
+        if name:
+            names.append(name)
+
+    return names
 
 
-def batchVisibilityCheck(chatgpt, batch):
-    
+def attachmentNameMatches(actual, expected):
+    if actual == expected:
+        return True
+
+    stem, extension = os.path.splitext(expected)
+
+    if not actual.startswith(stem + "("):
+        return False
+
+    suffix = actual[len(stem) + 1:]
+
+    return re.fullmatch(
+        r"(?:\d+|\d{8}-\d{6})\)" + re.escape(extension),
+        suffix
+    ) is not None
+
+
+def batchVisibilityCheck(chatgpt, batch, previous_count=0):
+    detected = visibleAttachmentNames(chatgpt)
+
+    if len(detected) - previous_count < len(batch):
+        return False
+
+    remaining = detected.copy()
+
     for file in batch:
-        filename = file.name
-        
-        if filenameVisibilityCheck(chatgpt, filename) is False:
+        match = next(
+            (
+                name for name in remaining
+                if attachmentNameMatches(name, file.name)
+            ),
+            None
+        )
+
+        if match is None:
             return False
-        
+
+        remaining.remove(match)
+
     return True
-        
+
 
 def resolveSendControl(chatgpt):
-    
+
     for control in chatgpt.descendants():
         info = control.element_info
         name = control.window_text() or ""
@@ -321,81 +363,93 @@ def resolveSendControl(chatgpt):
             and enabled
         ):
             return control
-        
+
     return None
-        
-        
+
+
+def waitForSendControl(chatgpt, timeout):
+    start_time = time.perf_counter()
+    while True:
+        control = resolveSendControl(chatgpt)
+        if control is not None:
+            return control
+        if time.perf_counter() - start_time >= timeout:
+            return None
+        time.sleep(POLL_INTERVAL)
+
+
 def waitForBatchVisibility(chatgpt, batch, timeout):
     start_time = time.perf_counter()
-    
+
     while True:
         result = batchVisibilityCheck(chatgpt, batch)
-        
+
         if result:
             return True
-        
+
         elapsed_time = time.perf_counter() - start_time
-        
+
         if elapsed_time >= timeout:
             return False
-        
-        time.sleep(0.1)
-        
-        
+
+        time.sleep(POLL_INTERVAL)
+
+
 def waitForGenerationComplete(chatgpt, timeout):
     start_time = time.perf_counter()
-    
+
     while True:
         result = generatingCheck(chatgpt)
-        
+
         if not result:
             return True
-        
+
         elapsed_time = time.perf_counter() - start_time
-        
+
         if elapsed_time >= timeout:
             return False
-        
-        time.sleep(0.1)
-        
-        
+
+        time.sleep(POLL_INTERVAL)
+
+
 def waitForGenerationStart(chatgpt, timeout):
     start_time = time.perf_counter()
-    
+
     while True:
         result = generatingCheck(chatgpt)
-        
+
         if result:
             return True
-        
+
         elapsed_time = time.perf_counter() - start_time
-        
+
         if elapsed_time >= timeout:
             return False
-        
-        time.sleep(0.1)
-        
-        
+
+        time.sleep(POLL_INTERVAL)
+
+
 def generatingCheck(chatgpt):
     selectors = {"title": "Stop", "control_type": "Button"}
-    
+
     try:
-        chatgpt.child_window(**selectors).wrapper_object()
-        return True
-    
+        control = chatgpt.child_window(**selectors).wrapper_object()
+
+        return control.is_visible() and control.is_enabled()
+
     except findwindows.ElementNotFoundError:
         return False
-    
-    
+
+
 def typeCourierMessage(chatgpt, composer, batch_number=None, total_batches=None):
     chatgpt.set_focus()
-    
+
     if batch_number is None and total_batches is None:
         return
-    
+
     if batch_number == total_batches:
         composer.type_keys(f"ContextCourier final batch {batch_number}/{total_batches}. All files delivered.", with_spaces=True)
-        
+
     else:
         composer.type_keys(f"ContextCourier batch {batch_number}/{total_batches}. More batches follow. Reply only: OK.", with_spaces=True)
 
@@ -444,7 +498,7 @@ def queueAttachments(attachment_queue, batch_number=None, total_batches=None):
     try:
         # Only resolve the top-level window here; resolve the composer after focus.
         chatgpt = Desktop(backend="uia").window(title="ChatGPT")
-        chatgpt.wait("visible", timeout=5)
+        chatgpt.wait("visible", timeout=WINDOW_TIMEOUT)
     except Exception as error:
         print("Could not find ChatGPT:")
         print(error)
@@ -453,38 +507,35 @@ def queueAttachments(attachment_queue, batch_number=None, total_batches=None):
     try:
         composer = pasteIntoChatGPTAndRestore(chatgpt, original_foreground_hwnd)
         chatgpt.set_focus()
-        
-        attachment_timeout = 10
-        start_timeout = 5
-        completion_timeout = 30
-        
-        if not waitForBatchVisibility(chatgpt, attachment_queue, attachment_timeout):
-            print(f"Attachment readiness timed out after {attachment_timeout} seconds.")
+
+        if not waitForBatchVisibility(chatgpt, attachment_queue, ATTACHMENT_READY_TIMEOUT):
+            print(f"Attachment readiness timed out after {ATTACHMENT_READY_TIMEOUT} seconds.")
             return False
-        
-        send_control = resolveSendControl(chatgpt)
-        
+
+        typeCourierMessage(chatgpt, composer, batch_number, total_batches)
+
+        send_control = waitForSendControl(chatgpt, SEND_READY_TIMEOUT)
+
         if send_control is None:
             return False
-        else:
-            typeCourierMessage(chatgpt, composer, batch_number, total_batches)
-            send_control.click_input()
-            
-            if not waitForGenerationStart(chatgpt, start_timeout):
-                print("Generation not started.")
-                
-                return False
-            
-            if not waitForGenerationComplete(chatgpt, completion_timeout):
-                print("Generation completion timed out.")
-                
-                return False
-    
+
+        send_control.click_input()
+
+        if not waitForGenerationStart(chatgpt, GENERATION_START_TIMEOUT):
+            print("Generation not started.")
+
+            return False
+
+        if not waitForGenerationComplete(chatgpt, GENERATION_COMPLETE_TIMEOUT):
+            print("Generation completion timed out.")
+
+            return False
+
     except Exception as error:
         print("Could not attach files to ChatGPT:")
         print(error)
         return False
-    
+
     print(f"Queued all {len(attachment_queue)} files in one paste.")
     return True
 
@@ -515,12 +566,12 @@ def parseArguments():
 
 def createFileBatches(attachment_queue):
     attachment_queue_batches = []
-    
-    for start in range (0, len(attachment_queue), MAX_ATTACHMENTS):
+
+    for start in range(0, len(attachment_queue), MAX_ATTACHMENTS):
         attachment_queue_batches.append(attachment_queue[start:start + MAX_ATTACHMENTS])
- 
+
     return attachment_queue_batches
-    
+
 
 def main():
     args = parseArguments()
@@ -535,7 +586,7 @@ def main():
 
     attachment_queue = createAttachmentQueue(args.snapshot_dir)
     print(f"Total files: {len(attachment_queue)}")
-    
+
     if len(attachment_queue) > MAX_ATTACHMENTS and not args.list_only and not args.batch_send:
             print(
                 f"\nCannot queue {len(attachment_queue)} files: "
@@ -548,19 +599,19 @@ def main():
         print("List-only mode: no files were attached.")
         return 0
     
+    timings.Timings.after_clickinput_wait = 0.0
     if args.batch_send:
         batches = createFileBatches(attachment_queue)
         total_batches = len(batches)
-        
+
         for batch_number, batch in enumerate(batches, start=1):
-            
+
             if not queueAttachments(batch, batch_number, total_batches):
                 print(f"Batch {batch_number} failed.")
                 return 1
-            
+
         return 0
 
-    timings.Timings.after_clickinput_wait = 0.0
     if not queueAttachments(attachment_queue):
         print("Attachment failed.")
         return 1
